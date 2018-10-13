@@ -1,6 +1,5 @@
-﻿#pragma warning disable CS1591
+#pragma warning disable CS1591
 using Discord.API.Gateway;
-using Discord.API.Rest;
 using Discord.Net.Queue;
 using Discord.Net.Rest;
 using Discord.Net.WebSockets;
@@ -26,10 +25,14 @@ namespace Discord.API
         public event Func<Exception, Task> Disconnected { add { _disconnectedEvent.Add(value); } remove { _disconnectedEvent.Remove(value); } }
         private readonly AsyncEvent<Func<Exception, Task>> _disconnectedEvent = new AsyncEvent<Func<Exception, Task>>();
 
+        private readonly bool _isExplicitUrl;
         private CancellationTokenSource _connectCancelToken;
         private string _gatewayUrl;
-        private bool _isExplicitUrl;
-        
+
+        //Store our decompression streams for zlib shared state
+        private MemoryStream _compressed;
+        private DeflateStream _decompressor;
+
         internal IWebSocketClient WebSocketClient { get; }
 
         public ConnectionState ConnectionState { get; private set; }
@@ -43,14 +46,29 @@ namespace Discord.API
                 _isExplicitUrl = true;
             WebSocketClient = webSocketProvider();
             //WebSocketClient.SetHeader("user-agent", DiscordConfig.UserAgent); (Causes issues in .NET Framework 4.6+)
+
             WebSocketClient.BinaryMessage += async (data, index, count) =>
             {
-                using (var compressed = new MemoryStream(data, index + 2, count - 2))
                 using (var decompressed = new MemoryStream())
                 {
-                    using (var zlib = new DeflateStream(compressed, CompressionMode.Decompress))
-                        zlib.CopyTo(decompressed);
+                    if (data[0] == 0x78)
+                    {
+                        //Strip the zlib header
+                        _compressed.Write(data, index + 2, count - 2);
+                        _compressed.SetLength(count - 2);
+                    }
+                    else
+                    {
+                        _compressed.Write(data, index, count);
+                        _compressed.SetLength(count);
+                    }
+
+                    //Reset positions so we don't run out of memory
+                    _compressed.Position = 0;
+                    _decompressor.CopyTo(decompressed);
+                    _compressed.Position = 0;
                     decompressed.Position = 0;
+
                     using (var reader = new StreamReader(decompressed))
                     using (var jsonReader = new JsonTextReader(reader))
                     {
@@ -76,6 +94,7 @@ namespace Discord.API
                 await _disconnectedEvent.InvokeAsync(ex).ConfigureAwait(false);
             };
         }
+
         internal override void Dispose(bool disposing)
         {
             if (!_isDisposed)
@@ -84,6 +103,8 @@ namespace Discord.API
                 {
                     _connectCancelToken?.Dispose();
                     (WebSocketClient as IDisposable)?.Dispose();
+                    _decompressor?.Dispose();
+                    _compressed?.Dispose();
                 }
                 _isDisposed = true;
             }
@@ -98,12 +119,20 @@ namespace Discord.API
             }
             finally { _stateLock.Release(); }
         }
+        /// <exception cref="InvalidOperationException">The client must be logged in before connecting.</exception>
+        /// <exception cref="NotSupportedException">This client is not configured with WebSocket support.</exception>
         internal override async Task ConnectInternalAsync()
         {
             if (LoginState != LoginState.LoggedIn)
-                throw new InvalidOperationException("You must log in before connecting.");
+                throw new InvalidOperationException("The client must be logged in before connecting.");
             if (WebSocketClient == null)
-                throw new NotSupportedException("This client is not configured with websocket support.");
+                throw new NotSupportedException("This client is not configured with WebSocket support.");
+
+            //Re-create streams to reset the zlib state
+            _compressed?.Dispose();
+            _decompressor?.Dispose();
+            _compressed = new MemoryStream();
+            _decompressor = new DeflateStream(_compressed, CompressionMode.Decompress);
 
             ConnectionState = ConnectionState.Connecting;
             try
@@ -115,7 +144,7 @@ namespace Discord.API
                 if (!_isExplicitUrl)
                 {
                     var gatewayResponse = await GetGatewayAsync().ConfigureAwait(false);
-                    _gatewayUrl = $"{gatewayResponse.Url}?v={DiscordConfig.APIVersion}&encoding={DiscordSocketConfig.GatewayEncoding}";
+                    _gatewayUrl = $"{gatewayResponse.Url}?v={DiscordConfig.APIVersion}&encoding={DiscordSocketConfig.GatewayEncoding}&compress=zlib-stream";
                 }
                 await WebSocketClient.ConnectAsync(_gatewayUrl).ConfigureAwait(false);
 
@@ -148,10 +177,11 @@ namespace Discord.API
             }
             finally { _stateLock.Release(); }
         }
+        /// <exception cref="NotSupportedException">This client is not configured with WebSocket support.</exception>
         internal override async Task DisconnectInternalAsync()
         {
             if (WebSocketClient == null)
-                throw new NotSupportedException("This client is not configured with websocket support.");
+                throw new NotSupportedException("This client is not configured with WebSocket support.");
 
             if (ConnectionState == ConnectionState.Disconnected) return;
             ConnectionState = ConnectionState.Disconnecting;
@@ -179,19 +209,8 @@ namespace Discord.API
             await RequestQueue.SendAsync(new WebSocketRequest(WebSocketClient, null, bytes, true, options)).ConfigureAwait(false);
             await _sentGatewayMessageEvent.InvokeAsync(opCode).ConfigureAwait(false);
         }
-
-        //Gateway
-        public async Task<GetGatewayResponse> GetGatewayAsync(RequestOptions options = null)
-        {
-            options = RequestOptions.CreateOrClone(options);
-            return await SendAsync<GetGatewayResponse>("GET", () => "gateway", new BucketIds(), options: options).ConfigureAwait(false);
-        }
-        public async Task<GetBotGatewayResponse> GetBotGatewayAsync(RequestOptions options = null)
-        {
-            options = RequestOptions.CreateOrClone(options);
-            return await SendAsync<GetBotGatewayResponse>("GET", () => "gateway/bot", new BucketIds(), options: options).ConfigureAwait(false);
-        }
-        public async Task SendIdentifyAsync(int largeThreshold = 100, bool useCompression = true, int shardID = 0, int totalShards = 1, RequestOptions options = null)
+        
+        public async Task SendIdentifyAsync(int largeThreshold = 100, int shardID = 0, int totalShards = 1, RequestOptions options = null)
         {
             options = RequestOptions.CreateOrClone(options);
             var props = new Dictionary<string, string>
@@ -202,8 +221,7 @@ namespace Discord.API
             {
                 Token = AuthToken,
                 Properties = props,
-                LargeThreshold = largeThreshold,
-                UseCompression = useCompression,
+                LargeThreshold = largeThreshold
             };
             if (totalShards > 1)
                 msg.ShardingParams = new int[] { shardID, totalShards };

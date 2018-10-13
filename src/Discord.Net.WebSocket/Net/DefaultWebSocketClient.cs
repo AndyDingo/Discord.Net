@@ -1,8 +1,8 @@
-﻿#if DEFAULTWEBSOCKET
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
+using System.Net;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
@@ -22,19 +22,21 @@ namespace Discord.Net.WebSockets
 
         private readonly SemaphoreSlim _lock;
         private readonly Dictionary<string, string> _headers;
+        private readonly IWebProxy _proxy;
         private ClientWebSocket _client;
         private Task _task;
         private CancellationTokenSource _cancelTokenSource;
         private CancellationToken _cancelToken, _parentToken;
         private bool _isDisposed, _isDisconnecting;
 
-        public DefaultWebSocketClient()
+        public DefaultWebSocketClient(IWebProxy proxy = null)
         {
             _lock = new SemaphoreSlim(1, 1);
             _cancelTokenSource = new CancellationTokenSource();
             _cancelToken = CancellationToken.None;
             _parentToken = CancellationToken.None;
             _headers = new Dictionary<string, string>();
+            _proxy = proxy;
         }
         private void Dispose(bool disposing)
         {
@@ -70,7 +72,7 @@ namespace Discord.Net.WebSockets
             _cancelToken = CancellationTokenSource.CreateLinkedTokenSource(_parentToken, _cancelTokenSource.Token).Token;
 
             _client = new ClientWebSocket();
-            _client.Options.Proxy = null;
+            _client.Options.Proxy = _proxy;
             _client.Options.KeepAliveInterval = TimeSpan.Zero;
             foreach (var header in _headers)
             {
@@ -206,14 +208,9 @@ namespace Discord.Net.WebSockets
 
                             //Use the internal buffer if we can get it
                             resultCount = (int)stream.Length;
-#if MSTRYBUFFER
-                            if (stream.TryGetBuffer(out var streamBuffer))
-                                result = streamBuffer.Array;
-                            else
-                                result = stream.ToArray();
-#else
-                                result = stream.GetBuffer();
-#endif
+
+                            result = stream.TryGetBuffer(out var streamBuffer) ? streamBuffer.Array : stream.ToArray();
+
                         }
                     }
                     else
@@ -245,4 +242,3 @@ namespace Discord.Net.WebSockets
         }
     }
 }
-#endif

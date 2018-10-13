@@ -48,6 +48,14 @@ namespace Discord.Rest
             else if (args.RoleIds.IsSpecified)
                 apiArgs.RoleIds = args.RoleIds.Value.ToArray();
 
+            /*
+             * Ensure that the nick passed in the params of the request is not null.
+             * string.Empty ("") is the only way to reset the user nick in the API,
+             * a value of null does not. This is a workaround.
+             */
+            if (apiArgs.Nickname.IsSpecified && apiArgs.Nickname.Value == null)
+                apiArgs.Nickname = new Optional<string>(string.Empty);
+
             await client.ApiClient.ModifyGuildMemberAsync(user.GuildId, user.Id, apiArgs, options).ConfigureAwait(false);
             return args;
         }
@@ -68,13 +76,13 @@ namespace Discord.Rest
         public static async Task AddRolesAsync(IGuildUser user, BaseDiscordClient client, IEnumerable<IRole> roles, RequestOptions options)
         {
             foreach (var role in roles)
-                await client.ApiClient.AddRoleAsync(user.Guild.Id, user.Id, role.Id, options);
+                await client.ApiClient.AddRoleAsync(user.Guild.Id, user.Id, role.Id, options).ConfigureAwait(false);
         }
 
         public static async Task RemoveRolesAsync(IGuildUser user, BaseDiscordClient client, IEnumerable<IRole> roles, RequestOptions options)
         {
             foreach (var role in roles)
-                await client.ApiClient.RemoveRoleAsync(user.Guild.Id, user.Id, role.Id, options);
+                await client.ApiClient.RemoveRoleAsync(user.Guild.Id, user.Id, role.Id, options).ConfigureAwait(false);
         }
     }
 }

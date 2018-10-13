@@ -1,4 +1,4 @@
-﻿using Discord.API.Rest;
+using Discord.API.Rest;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -14,10 +14,11 @@ namespace Discord.Rest
     internal static class GuildHelper
     {
         //General
+        /// <exception cref="ArgumentNullException"><paramref name="func"/> is <c>null</c>.</exception>
         public static async Task<Model> ModifyAsync(IGuild guild, BaseDiscordClient client,
             Action<GuildProperties> func, RequestOptions options)
         {
-            if (func == null) throw new NullReferenceException(nameof(func));
+            if (func == null) throw new ArgumentNullException(nameof(func));
 
             var args = new GuildProperties();
             func(args);
@@ -26,11 +27,11 @@ namespace Discord.Rest
             {
                 AfkChannelId = args.AfkChannelId,
                 AfkTimeout = args.AfkTimeout,
+                SystemChannelId = args.SystemChannelId,
                 DefaultMessageNotifications = args.DefaultMessageNotifications,
                 Icon = args.Icon.IsSpecified ? args.Icon.Value?.ToModel() : Optional.Create<ImageModel?>(),
                 Name = args.Name,
                 Splash = args.Splash.IsSpecified ? args.Splash.Value?.ToModel() : Optional.Create<ImageModel?>(),
-                Username = args.Username,
                 VerificationLevel = args.VerificationLevel
             };
 
@@ -38,6 +39,11 @@ namespace Discord.Rest
                 apiArgs.AfkChannelId = args.AfkChannel.Value.Id;
             else if (args.AfkChannelId.IsSpecified)
                 apiArgs.AfkChannelId = args.AfkChannelId.Value;
+
+            if (args.SystemChannel.IsSpecified)
+                apiArgs.SystemChannelId = args.SystemChannel.Value.Id;
+            else if (args.SystemChannelId.IsSpecified)
+                apiArgs.SystemChannelId = args.SystemChannelId.Value;
 
             if (args.Owner.IsSpecified)
                 apiArgs.OwnerId = args.Owner.Value.Id;
@@ -56,10 +62,11 @@ namespace Discord.Rest
 
             return await client.ApiClient.ModifyGuildAsync(guild.Id, apiArgs, options).ConfigureAwait(false);
         }
+        /// <exception cref="ArgumentNullException"><paramref name="func"/> is <c>null</c>.</exception>
         public static async Task<EmbedModel> ModifyEmbedAsync(IGuild guild, BaseDiscordClient client,
             Action<GuildEmbedProperties> func, RequestOptions options)
         {
-            if (func == null) throw new NullReferenceException(nameof(func));
+            if (func == null) throw new ArgumentNullException(nameof(func));
 
             var args = new GuildEmbedProperties();
             func(args);
@@ -105,6 +112,11 @@ namespace Discord.Rest
             var models = await client.ApiClient.GetGuildBansAsync(guild.Id, options).ConfigureAwait(false);
             return models.Select(x => RestBan.Create(client, x)).ToImmutableArray();
         }
+        public static async Task<RestBan> GetBanAsync(IGuild guild, BaseDiscordClient client, ulong userId, RequestOptions options)
+        {
+            var model = await client.ApiClient.GetGuildBanAsync(guild.Id, userId, options).ConfigureAwait(false);
+            return RestBan.Create(client, model);
+        }
 
         public static async Task AddBanAsync(IGuild guild, BaseDiscordClient client,
             ulong userId, int pruneDays, string reason, RequestOptions options)
@@ -133,23 +145,59 @@ namespace Discord.Rest
             var models = await client.ApiClient.GetGuildChannelsAsync(guild.Id, options).ConfigureAwait(false);
             return models.Select(x => RestGuildChannel.Create(client, guild, x)).ToImmutableArray();
         }
+        /// <exception cref="ArgumentNullException"><paramref name="name"/> is <c>null</c>.</exception>
         public static async Task<RestTextChannel> CreateTextChannelAsync(IGuild guild, BaseDiscordClient client,
-            string name, RequestOptions options)
+            string name, RequestOptions options, Action<TextChannelProperties> func = null)
         {
-            if (name == null) throw new ArgumentNullException(nameof(name));
+            if (name == null) throw new ArgumentNullException(paramName: nameof(name));
 
-            var args = new CreateGuildChannelParams(name, ChannelType.Text);
+            var props = new TextChannelProperties();
+            func?.Invoke(props);
+
+            var args = new CreateGuildChannelParams(name, ChannelType.Text)
+            {
+                CategoryId = props.CategoryId,
+                Topic = props.Topic,
+                IsNsfw = props.IsNsfw,
+            };
             var model = await client.ApiClient.CreateGuildChannelAsync(guild.Id, args, options).ConfigureAwait(false);
             return RestTextChannel.Create(client, guild, model);
         }
+        /// <exception cref="ArgumentNullException"><paramref name="name"/> is <c>null</c>.</exception>
         public static async Task<RestVoiceChannel> CreateVoiceChannelAsync(IGuild guild, BaseDiscordClient client,
-            string name, RequestOptions options)
+            string name, RequestOptions options, Action<VoiceChannelProperties> func = null)
         {
-            if (name == null) throw new ArgumentNullException(nameof(name));
+            if (name == null) throw new ArgumentNullException(paramName: nameof(name));
 
-            var args = new CreateGuildChannelParams(name, ChannelType.Voice);
+            var props = new VoiceChannelProperties();
+            func?.Invoke(props);
+
+            var args = new CreateGuildChannelParams(name, ChannelType.Voice)
+            {
+                CategoryId = props.CategoryId,
+                Bitrate = props.Bitrate,
+                UserLimit = props.UserLimit
+            };
             var model = await client.ApiClient.CreateGuildChannelAsync(guild.Id, args, options).ConfigureAwait(false);
             return RestVoiceChannel.Create(client, guild, model);
+        }
+        /// <exception cref="ArgumentNullException"><paramref name="name"/> is <c>null</c>.</exception>
+        public static async Task<RestCategoryChannel> CreateCategoryChannelAsync(IGuild guild, BaseDiscordClient client,
+            string name, RequestOptions options)
+        {
+            if (name == null) throw new ArgumentNullException(paramName: nameof(name));
+
+            var args = new CreateGuildChannelParams(name, ChannelType.Category);
+            var model = await client.ApiClient.CreateGuildChannelAsync(guild.Id, args, options).ConfigureAwait(false);
+            return RestCategoryChannel.Create(client, guild, model);
+        }
+
+        //Voice Regions
+        public static async Task<IReadOnlyCollection<RestVoiceRegion>> GetVoiceRegionsAsync(IGuild guild, BaseDiscordClient client,
+            RequestOptions options)
+        {
+            var models = await client.ApiClient.GetGuildVoiceRegionsAsync(guild.Id, options).ConfigureAwait(false);
+            return models.Select(x => RestVoiceRegion.Create(client, x)).ToImmutableArray();
         }
 
         //Integrations
@@ -174,12 +222,21 @@ namespace Discord.Rest
             var models = await client.ApiClient.GetGuildInvitesAsync(guild.Id, options).ConfigureAwait(false);
             return models.Select(x => RestInviteMetadata.Create(client, guild, null, x)).ToImmutableArray();
         }
+        public static async Task<RestInviteMetadata> GetVanityInviteAsync(IGuild guild, BaseDiscordClient client,
+            RequestOptions options)
+        {
+            var vanityModel = await client.ApiClient.GetVanityInviteAsync(guild.Id, options).ConfigureAwait(false);
+            if (vanityModel == null) throw new InvalidOperationException("This guild does not have a vanity URL.");
+            var inviteModel = await client.ApiClient.GetInviteAsync(vanityModel.Code, options).ConfigureAwait(false);
+            return RestInviteMetadata.Create(client, guild, null, inviteModel);
+        }
 
         //Roles
+        /// <exception cref="ArgumentNullException"><paramref name="name"/> is <c>null</c>.</exception>
         public static async Task<RestRole> CreateRoleAsync(IGuild guild, BaseDiscordClient client,
             string name, GuildPermissions? permissions, Color? color, bool isHoisted, RequestOptions options)
         {
-            if (name == null) throw new ArgumentNullException(nameof(name));
+            if (name == null) throw new ArgumentNullException(paramName: nameof(name));
 
             var model = await client.ApiClient.CreateGuildRoleAsync(guild.Id, options).ConfigureAwait(false);
             var role = RestRole.Create(client, guild, model);
@@ -222,7 +279,7 @@ namespace Discord.Rest
                     };
                     if (info.Position != null)
                         args.AfterUserId = info.Position.Value;
-                    var models = await client.ApiClient.GetGuildMembersAsync(guild.Id, args, options);
+                    var models = await client.ApiClient.GetGuildMembersAsync(guild.Id, args, options).ConfigureAwait(false);
                     return models.Select(x => RestGuildUser.Create(client, guild, x)).ToImmutableArray();
                 },
                 nextPage: (info, lastPage) =>
@@ -247,5 +304,90 @@ namespace Discord.Rest
                 model = await client.ApiClient.BeginGuildPruneAsync(guild.Id, args, options).ConfigureAwait(false);
             return model.Pruned;
         }
+
+        // Audit logs
+        public static IAsyncEnumerable<IReadOnlyCollection<RestAuditLogEntry>> GetAuditLogsAsync(IGuild guild, BaseDiscordClient client,
+            ulong? from, int? limit, RequestOptions options)
+        {
+            return new PagedAsyncEnumerable<RestAuditLogEntry>(
+                DiscordConfig.MaxAuditLogEntriesPerBatch,
+                async (info, ct) =>
+                {
+                    var args = new GetAuditLogsParams
+                    {
+                        Limit = info.PageSize
+                    };
+                    if (info.Position != null)
+                        args.BeforeEntryId = info.Position.Value;
+                    var model = await client.ApiClient.GetAuditLogsAsync(guild.Id, args, options);
+                    return model.Entries.Select((x) => RestAuditLogEntry.Create(client, model, x)).ToImmutableArray();
+                },
+                nextPage: (info, lastPage) =>
+                {
+                    if (lastPage.Count != DiscordConfig.MaxAuditLogEntriesPerBatch)
+                        return false;
+                    info.Position = lastPage.Min(x => x.Id);
+                    return true;
+                },
+                start: from,
+                count: limit
+            );
+        }
+
+        //Webhooks
+        public static async Task<RestWebhook> GetWebhookAsync(IGuild guild, BaseDiscordClient client, ulong id, RequestOptions options)
+        {
+            var model = await client.ApiClient.GetWebhookAsync(id, options: options).ConfigureAwait(false);
+            if (model == null)
+                return null;
+            return RestWebhook.Create(client, guild, model);
+        }
+        public static async Task<IReadOnlyCollection<RestWebhook>> GetWebhooksAsync(IGuild guild, BaseDiscordClient client, RequestOptions options)
+        {
+            var models = await client.ApiClient.GetGuildWebhooksAsync(guild.Id, options).ConfigureAwait(false);
+            return models.Select(x => RestWebhook.Create(client, guild, x)).ToImmutableArray();
+        }
+
+        //Emotes
+        public static async Task<GuildEmote> GetEmoteAsync(IGuild guild, BaseDiscordClient client, ulong id, RequestOptions options)
+        {
+            var emote = await client.ApiClient.GetGuildEmoteAsync(guild.Id, id, options).ConfigureAwait(false);
+            return emote.ToEntity();
+        }
+        public static async Task<GuildEmote> CreateEmoteAsync(IGuild guild, BaseDiscordClient client, string name, Image image, Optional<IEnumerable<IRole>> roles, 
+            RequestOptions options)
+        {
+            var apiargs = new CreateGuildEmoteParams
+            {
+                Name = name,
+                Image = image.ToModel()
+            };
+            if (roles.IsSpecified)
+                apiargs.RoleIds = roles.Value?.Select(xr => xr.Id).ToArray();
+
+            var emote = await client.ApiClient.CreateGuildEmoteAsync(guild.Id, apiargs, options).ConfigureAwait(false);
+            return emote.ToEntity();
+        }
+        /// <exception cref="ArgumentNullException"><paramref name="func"/> is <c>null</c>.</exception>
+        public static async Task<GuildEmote> ModifyEmoteAsync(IGuild guild, BaseDiscordClient client, ulong id, Action<EmoteProperties> func, 
+            RequestOptions options)
+        {
+            if (func == null) throw new ArgumentNullException(paramName: nameof(func));
+
+            var props = new EmoteProperties();
+            func(props);
+
+            var apiargs = new ModifyGuildEmoteParams
+            {
+                Name = props.Name
+            };
+            if (props.Roles.IsSpecified)
+                apiargs.RoleIds = props.Roles.Value?.Select(xr => xr.Id).ToArray();
+
+            var emote = await client.ApiClient.ModifyGuildEmoteAsync(guild.Id, id, apiargs, options).ConfigureAwait(false);
+            return emote.ToEntity();
+        }
+        public static Task DeleteEmoteAsync(IGuild guild, BaseDiscordClient client, ulong id, RequestOptions options) 
+            => client.ApiClient.DeleteGuildEmoteAsync(guild.Id, id, options);
     }
 }

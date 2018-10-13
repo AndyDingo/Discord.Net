@@ -1,4 +1,4 @@
-﻿using Discord.API;
+using Discord.API;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 using System;
@@ -25,7 +25,6 @@ namespace Discord.Net.Converters
                 if (converter != null)
                 {
                     property.Converter = converter;
-                    property.MemberConverter = converter;
                 }
             }
             else
@@ -65,6 +64,12 @@ namespace Discord.Net.Converters
             {
                 if (type == typeof(ulong))
                     return UInt64Converter.Instance;
+            }
+            bool hasUnixStamp = propInfo.GetCustomAttribute<UnixTimestampAttribute>() != null;
+            if (hasUnixStamp)
+            {
+                if (type == typeof(DateTimeOffset))
+                    return UnixTimestampConverter.Instance;
             }
 
             //Enums

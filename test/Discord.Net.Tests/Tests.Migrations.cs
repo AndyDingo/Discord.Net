@@ -19,7 +19,7 @@ namespace Discord
                 if (client == null)
                 {
                     client = new DiscordRestClient();
-                    await client.LoginAsync(TokenType.Bot, _config.Token, false).ConfigureAwait(false);
+                    await client.LoginAsync(TokenType.Bot, _config.Token).ConfigureAwait(false);
                     guild = await client.GetGuildAsync(_config.GuildId);
                 }
 
@@ -57,7 +57,7 @@ namespace Discord
             
             foreach (var channel in textChannels)
             {
-                if (channel.Id != guild.DefaultChannelId)
+                //if (channel.Id != guild.DefaultChannelId)
                     await channel.DeleteAsync();
             }
             foreach (var channel in voiceChannels)

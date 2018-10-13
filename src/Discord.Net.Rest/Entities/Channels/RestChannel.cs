@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -6,14 +6,19 @@ using Model = Discord.API.Channel;
 
 namespace Discord.Rest
 {
-    public abstract class RestChannel : RestEntity<ulong>, IChannel, IUpdateable
+    /// <summary>
+    ///     Represents a generic REST-based channel.
+    /// </summary>
+    public class RestChannel : RestEntity<ulong>, IChannel, IUpdateable
     {
+        /// <inheritdoc />
         public DateTimeOffset CreatedAt => SnowflakeUtils.FromSnowflake(Id);
 
         internal RestChannel(BaseDiscordClient discord, ulong id)
             : base(discord, id)
         {
         }
+        /// <exception cref="InvalidOperationException">Unexpected channel type.</exception>
         internal static RestChannel Create(BaseDiscordClient discord, Model model)
         {
             switch (model.Type)
@@ -24,10 +29,13 @@ namespace Discord.Rest
                 case ChannelType.DM:
                 case ChannelType.Group:
                     return CreatePrivate(discord, model) as RestChannel;
+                case ChannelType.Category:
+                    return RestCategoryChannel.Create(discord, new RestGuild(discord, model.GuildId.Value), model);
                 default:
-                    throw new InvalidOperationException($"Unexpected channel type: {model.Type}");
+                    return new RestChannel(discord, model.Id);
             }
         }
+        /// <exception cref="InvalidOperationException">Unexpected channel type.</exception>
         internal static IRestPrivateChannel CreatePrivate(BaseDiscordClient discord, Model model)
         {
             switch (model.Type)
@@ -40,17 +48,20 @@ namespace Discord.Rest
                     throw new InvalidOperationException($"Unexpected channel type: {model.Type}");
             }
         }
-        internal abstract void Update(Model model);
+        internal virtual void Update(Model model) { }
 
-        public abstract Task UpdateAsync(RequestOptions options = null);
+        /// <inheritdoc />
+        public virtual Task UpdateAsync(RequestOptions options = null) => Task.Delay(0);
 
         //IChannel
+        /// <inheritdoc />
         string IChannel.Name => null;
-        bool IChannel.IsNsfw => ChannelHelper.IsNsfw(this);
 
+        /// <inheritdoc />
         Task<IUser> IChannel.GetUserAsync(ulong id, CacheMode mode, RequestOptions options)
-            => Task.FromResult<IUser>(null); //Overriden
+            => Task.FromResult<IUser>(null); //Overridden
+        /// <inheritdoc />
         IAsyncEnumerable<IReadOnlyCollection<IUser>> IChannel.GetUsersAsync(CacheMode mode, RequestOptions options)
-            => AsyncEnumerable.Empty<IReadOnlyCollection<IUser>>(); //Overriden
+            => AsyncEnumerable.Empty<IReadOnlyCollection<IUser>>(); //Overridden
     }
 }

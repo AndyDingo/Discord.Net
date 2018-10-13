@@ -1,5 +1,6 @@
-﻿using Newtonsoft.Json;
 using System;
+using System.IO;
+using Newtonsoft.Json;
 using Model = Discord.API.Image;
 
 namespace Discord.Net.Converters
@@ -12,6 +13,7 @@ namespace Discord.Net.Converters
         public override bool CanRead => true;
         public override bool CanWrite => true;
 
+        /// <exception cref="InvalidOperationException">Cannot read from image.</exception>
         public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
         {
             throw new InvalidOperationException();
@@ -23,10 +25,24 @@ namespace Discord.Net.Converters
 
             if (image.Stream != null)
             {
-                byte[] bytes = new byte[image.Stream.Length - image.Stream.Position];
-                image.Stream.Read(bytes, 0, bytes.Length);
+                byte[] bytes;
+                int length;
+                if (image.Stream.CanSeek)
+                {
+                    bytes = new byte[image.Stream.Length - image.Stream.Position];
+                    length = image.Stream.Read(bytes, 0, bytes.Length);
+                }
+                else
+                {
+                    var cloneStream = new MemoryStream();
+                    image.Stream.CopyTo(cloneStream);
+                    bytes = new byte[cloneStream.Length];
+                    cloneStream.Position = 0;
+                    cloneStream.Read(bytes, 0, bytes.Length);
+                    length = (int)cloneStream.Length;
+                }
 
-                string base64 = Convert.ToBase64String(bytes);
+                string base64 = Convert.ToBase64String(bytes, 0, length);
                 writer.WriteValue($"data:image/jpeg;base64,{base64}");
             }
             else if (image.Hash != null)

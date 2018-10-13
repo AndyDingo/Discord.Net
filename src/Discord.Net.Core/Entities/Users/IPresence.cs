@@ -1,10 +1,17 @@
-﻿namespace Discord
+namespace Discord
 {
+    /// <summary>
+    ///     Represents the user's presence status. This may include their online status and their activity.
+    /// </summary>
     public interface IPresence
     {
-        /// <summary> Gets the game this user is currently playing, if any. </summary>
-        Game? Game { get; }
-        /// <summary> Gets the current status of this user. </summary>
+        /// <summary>
+        ///     Gets the activity this user is currently doing.
+        /// </summary>
+        IActivity Activity { get; }
+        /// <summary>
+        ///     Gets the current status of this user.
+        /// </summary>
         UserStatus Status { get; }
     }
 }

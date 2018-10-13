@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 
 namespace Discord
@@ -10,7 +10,8 @@ namespace Discord
         public static Optional<T> Unspecified => default(Optional<T>);
         private readonly T _value;
 
-        /// <summary> Gets the value for this paramter. </summary>
+        /// <summary> Gets the value for this parameter. </summary>
+        /// <exception cref="InvalidOperationException" accessor="get">This property has no value set.</exception>
         public T Value
         {
             get

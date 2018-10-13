@@ -1,4 +1,4 @@
-﻿using Discord.API.Rest;
+using Discord.API.Rest;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
@@ -13,13 +13,13 @@ namespace Discord.Rest
     internal static class ChannelHelper
     {
         //General
-        public static async Task DeleteAsync(IChannel channel, BaseDiscordClient client, 
+        public static async Task DeleteAsync(IChannel channel, BaseDiscordClient client,
             RequestOptions options)
-        { 
+        {
             await client.ApiClient.DeleteChannelAsync(channel.Id, options).ConfigureAwait(false);
         }
-        public static async Task<Model> ModifyAsync(IGuildChannel channel, BaseDiscordClient client, 
-            Action<GuildChannelProperties> func, 
+        public static async Task<Model> ModifyAsync(IGuildChannel channel, BaseDiscordClient client,
+            Action<GuildChannelProperties> func,
             RequestOptions options)
         {
             var args = new GuildChannelProperties();
@@ -27,12 +27,13 @@ namespace Discord.Rest
             var apiArgs = new API.Rest.ModifyGuildChannelParams
             {
                 Name = args.Name,
-                Position = args.Position
+                Position = args.Position,
+                CategoryId = args.CategoryId
             };
             return await client.ApiClient.ModifyGuildChannelAsync(channel.Id, apiArgs, options).ConfigureAwait(false);
         }
-        public static async Task<Model> ModifyAsync(ITextChannel channel, BaseDiscordClient client, 
-            Action<TextChannelProperties> func, 
+        public static async Task<Model> ModifyAsync(ITextChannel channel, BaseDiscordClient client,
+            Action<TextChannelProperties> func,
             RequestOptions options)
         {
             var args = new TextChannelProperties();
@@ -41,12 +42,15 @@ namespace Discord.Rest
             {
                 Name = args.Name,
                 Position = args.Position,
-                Topic = args.Topic
+                CategoryId = args.CategoryId,
+                Topic = args.Topic,
+                IsNsfw = args.IsNsfw,
+                SlowModeInterval = args.SlowModeInterval,
             };
             return await client.ApiClient.ModifyGuildChannelAsync(channel.Id, apiArgs, options).ConfigureAwait(false);
         }
-        public static async Task<Model> ModifyAsync(IVoiceChannel channel, BaseDiscordClient client, 
-            Action<VoiceChannelProperties> func, 
+        public static async Task<Model> ModifyAsync(IVoiceChannel channel, BaseDiscordClient client,
+            Action<VoiceChannelProperties> func,
             RequestOptions options)
         {
             var args = new VoiceChannelProperties();
@@ -56,6 +60,7 @@ namespace Discord.Rest
                 Bitrate = args.Bitrate,
                 Name = args.Name,
                 Position = args.Position,
+                CategoryId = args.CategoryId,
                 UserLimit = args.UserLimit.IsSpecified ? (args.UserLimit.Value ?? 0) : Optional.Create<int>()
             };
             return await client.ApiClient.ModifyGuildChannelAsync(channel.Id, apiArgs, options).ConfigureAwait(false);
@@ -72,20 +77,14 @@ namespace Discord.Rest
             int? maxAge, int? maxUses, bool isTemporary, bool isUnique, RequestOptions options)
         {
             var args = new CreateChannelInviteParams { IsTemporary = isTemporary, IsUnique = isUnique };
-            if (maxAge.HasValue)
-                args.MaxAge = maxAge.Value;
-            else
-                args.MaxAge = 0;
-            if (maxUses.HasValue)
-                args.MaxUses = maxUses.Value;
-            else
-                args.MaxUses = 0;
+            args.MaxAge = maxAge.GetValueOrDefault(0);
+            args.MaxUses = maxUses.GetValueOrDefault(0);
             var model = await client.ApiClient.CreateChannelInviteAsync(channel.Id, args, options).ConfigureAwait(false);
             return RestInviteMetadata.Create(client, null, channel, model);
         }
 
         //Messages
-        public static async Task<RestMessage> GetMessageAsync(IMessageChannel channel, BaseDiscordClient client, 
+        public static async Task<RestMessage> GetMessageAsync(IMessageChannel channel, BaseDiscordClient client,
             ulong id, RequestOptions options)
         {
             var guildId = (channel as IGuildChannel)?.GuildId;
@@ -96,7 +95,7 @@ namespace Discord.Rest
             var author = GetAuthor(client, guild, model.Author.Value, model.WebhookId.ToNullable());
             return RestMessage.Create(client, channel, author, model);
         }
-        public static IAsyncEnumerable<IReadOnlyCollection<RestMessage>> GetMessagesAsync(IMessageChannel channel, BaseDiscordClient client, 
+        public static IAsyncEnumerable<IReadOnlyCollection<RestMessage>> GetMessagesAsync(IMessageChannel channel, BaseDiscordClient client,
             ulong? fromMessageId, Direction dir, int limit, RequestOptions options)
         {
             if (dir == Direction.Around)
@@ -122,7 +121,7 @@ namespace Discord.Rest
                     foreach (var model in models)
                     {
                         var author = GetAuthor(client, guild, model.Author.Value, model.WebhookId.ToNullable());
-                        builder.Add(RestMessage.Create(client, channel, author, model));                        
+                        builder.Add(RestMessage.Create(client, channel, author, model));
                     }
                     return builder.ToImmutable();
                 },
@@ -155,6 +154,7 @@ namespace Discord.Rest
             return builder.ToImmutable();
         }
 
+        /// <exception cref="ArgumentOutOfRangeException">Message content is too long, length must be less or equal to <see cref="DiscordConfig.MaxMessageSize"/>.</exception>
         public static async Task<RestUserMessage> SendMessageAsync(IMessageChannel channel, BaseDiscordClient client,
             string text, bool isTTS, Embed embed, RequestOptions options)
         {
@@ -163,41 +163,75 @@ namespace Discord.Rest
             return RestUserMessage.Create(client, channel, client.CurrentUser, model);
         }
 
-#if FILESYSTEM
+        /// <exception cref="ArgumentException">
+        /// <paramref name="filePath" /> is a zero-length string, contains only white space, or contains one or more
+        /// invalid characters as defined by <see cref="System.IO.Path.GetInvalidPathChars"/>.
+        /// </exception>
+        /// <exception cref="ArgumentNullException">
+        /// <paramref name="filePath" /> is <c>null</c>.
+        /// </exception>
+        /// <exception cref="PathTooLongException">
+        /// The specified path, file name, or both exceed the system-defined maximum length. For example, on
+        /// Windows-based platforms, paths must be less than 248 characters, and file names must be less than 260
+        /// characters.
+        /// </exception>
+        /// <exception cref="DirectoryNotFoundException">
+        /// The specified path is invalid, (for example, it is on an unmapped drive).
+        /// </exception>
+        /// <exception cref="UnauthorizedAccessException">
+        /// <paramref name="filePath" /> specified a directory.-or- The caller does not have the required permission.
+        /// </exception>
+        /// <exception cref="FileNotFoundException">
+        /// The file specified in <paramref name="filePath" /> was not found.
+        /// </exception>
+        /// <exception cref="NotSupportedException"><paramref name="filePath" /> is in an invalid format.</exception>
+        /// <exception cref="IOException">An I/O error occurred while opening the file.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">Message content is too long, length must be less or equal to <see cref="DiscordConfig.MaxMessageSize"/>.</exception>
         public static async Task<RestUserMessage> SendFileAsync(IMessageChannel channel, BaseDiscordClient client,
-            string filePath, string text, bool isTTS, RequestOptions options)
+            string filePath, string text, bool isTTS, Embed embed, RequestOptions options)
         {
             string filename = Path.GetFileName(filePath);
             using (var file = File.OpenRead(filePath))
-                return await SendFileAsync(channel, client, file, filename, text, isTTS, options).ConfigureAwait(false);
+                return await SendFileAsync(channel, client, file, filename, text, isTTS, embed, options).ConfigureAwait(false);
         }
-#endif
+
+        /// <exception cref="ArgumentOutOfRangeException">Message content is too long, length must be less or equal to <see cref="DiscordConfig.MaxMessageSize"/>.</exception>
         public static async Task<RestUserMessage> SendFileAsync(IMessageChannel channel, BaseDiscordClient client,
-            Stream stream, string filename, string text, bool isTTS, RequestOptions options)
+            Stream stream, string filename, string text, bool isTTS, Embed embed, RequestOptions options)
         {
-            var args = new UploadFileParams(stream) { Filename = filename, Content = text, IsTTS = isTTS };
+            var args = new UploadFileParams(stream) { Filename = filename, Content = text, IsTTS = isTTS, Embed = embed != null ? embed.ToModel() : Optional<API.Embed>.Unspecified };
             var model = await client.ApiClient.UploadFileAsync(channel.Id, args, options).ConfigureAwait(false);
             return RestUserMessage.Create(client, channel, client.CurrentUser, model);
-        }     
+        }
 
-        public static async Task DeleteMessagesAsync(IMessageChannel channel, BaseDiscordClient client,
+        public static Task DeleteMessageAsync(IMessageChannel channel, ulong messageId, BaseDiscordClient client,
+            RequestOptions options)
+            => MessageHelper.DeleteAsync(channel.Id, messageId, client, options);
+
+        public static async Task DeleteMessagesAsync(ITextChannel channel, BaseDiscordClient client,
             IEnumerable<ulong> messageIds, RequestOptions options)
         {
+            const int BATCH_SIZE = 100;
+
             var msgs = messageIds.ToArray();
-            if (msgs.Length < 100)
+            int batches = msgs.Length / BATCH_SIZE;
+            for (int i = 0; i <= batches; i++)
             {
-                var args = new DeleteMessagesParams(msgs);
-                await client.ApiClient.DeleteMessagesAsync(channel.Id, args, options).ConfigureAwait(false);
-            }
-            else
-            {
-                var batch = new ulong[100];
-                for (int i = 0; i < (msgs.Length + 99) / 100; i++)
+                ArraySegment<ulong> batch;
+                if (i < batches)
                 {
-                    Array.Copy(msgs, i * 100, batch, 0, Math.Min(msgs.Length - (100 * i), 100));
-                    var args = new DeleteMessagesParams(batch);
-                    await client.ApiClient.DeleteMessagesAsync(channel.Id, args, options).ConfigureAwait(false);
+                    batch = new ArraySegment<ulong>(msgs, i * BATCH_SIZE, BATCH_SIZE);
                 }
+                else
+                {
+                    batch = new ArraySegment<ulong>(msgs, i * BATCH_SIZE, msgs.Length - batches * BATCH_SIZE);
+                    if (batch.Count == 0)
+                    {
+                        break;
+                    }
+                }
+                var args = new DeleteMessagesParams(batch.ToArray());
+                await client.ApiClient.DeleteMessagesAsync(channel.Id, args, options).ConfigureAwait(false);
             }
         }
 
@@ -226,6 +260,7 @@ namespace Discord.Rest
         }
 
         //Users
+        /// <exception cref="InvalidOperationException">Resolving permissions requires the parent guild to be downloaded.</exception>
         public static async Task<RestGuildUser> GetUserAsync(IGuildChannel channel, IGuild guild, BaseDiscordClient client,
             ulong id, RequestOptions options)
         {
@@ -233,11 +268,12 @@ namespace Discord.Rest
             if (model == null)
                 return null;
             var user = RestGuildUser.Create(client, guild, model);
-            if (!user.GetPermissions(channel).ReadMessages)
+            if (!user.GetPermissions(channel).ViewChannel)
                 return null;
 
             return user;
         }
+        /// <exception cref="InvalidOperationException">Resolving permissions requires the parent guild to be downloaded.</exception>
         public static IAsyncEnumerable<IReadOnlyCollection<RestGuildUser>> GetUsersAsync(IGuildChannel channel, IGuild guild, BaseDiscordClient client,
             ulong? fromUserId, int? limit, RequestOptions options)
         {
@@ -254,7 +290,7 @@ namespace Discord.Rest
                     var models = await client.ApiClient.GetGuildMembersAsync(guild.Id, args, options).ConfigureAwait(false);
                     return models
                         .Select(x => RestGuildUser.Create(client, guild, x))
-                        .Where(x => x.GetPermissions(channel).ReadMessages)
+                        .Where(x => x.GetPermissions(channel).ViewChannel)
                         .ToImmutableArray();
                 },
                 nextPage: (info, lastPage) =>
@@ -275,9 +311,43 @@ namespace Discord.Rest
         {
             await client.ApiClient.TriggerTypingIndicatorAsync(channel.Id, options).ConfigureAwait(false);
         }
-        public static IDisposable EnterTypingState(IMessageChannel channel, BaseDiscordClient client, 
+        public static IDisposable EnterTypingState(IMessageChannel channel, BaseDiscordClient client,
             RequestOptions options)
-            => new TypingNotifier(client, channel, options);
+            => new TypingNotifier(channel, options);
+
+        //Webhooks
+        public static async Task<RestWebhook> CreateWebhookAsync(ITextChannel channel, BaseDiscordClient client, string name, Stream avatar, RequestOptions options)
+        {
+            var args = new CreateWebhookParams { Name = name };
+            if (avatar != null)
+                args.Avatar = new API.Image(avatar);
+
+            var model = await client.ApiClient.CreateWebhookAsync(channel.Id, args, options).ConfigureAwait(false);
+            return RestWebhook.Create(client, channel, model);
+        }
+        public static async Task<RestWebhook> GetWebhookAsync(ITextChannel channel, BaseDiscordClient client, ulong id, RequestOptions options)
+        {
+            var model = await client.ApiClient.GetWebhookAsync(id, options: options).ConfigureAwait(false);
+            if (model == null)
+                return null;
+            return RestWebhook.Create(client, channel, model);
+        }
+        public static async Task<IReadOnlyCollection<RestWebhook>> GetWebhooksAsync(ITextChannel channel, BaseDiscordClient client, RequestOptions options)
+        {
+            var models = await client.ApiClient.GetChannelWebhooksAsync(channel.Id, options).ConfigureAwait(false);
+            return models.Select(x => RestWebhook.Create(client, channel, x))
+                .ToImmutableArray();
+        }
+        // Categories
+        public static async Task<ICategoryChannel> GetCategoryAsync(INestedChannel channel, BaseDiscordClient client, RequestOptions options)
+        {
+            // if no category id specified, return null
+            if (!channel.CategoryId.HasValue)
+                return null;
+            // CategoryId will contain a value here
+            var model = await client.ApiClient.GetChannelAsync(channel.CategoryId.Value, options).ConfigureAwait(false);
+            return RestCategoryChannel.Create(client, model) as ICategoryChannel;
+        }
 
         //Helpers
         private static IUser GetAuthor(BaseDiscordClient client, IGuild guild, UserModel model, ulong? webhookId)
@@ -289,10 +359,5 @@ namespace Discord.Rest
                 author = RestUser.Create(client, guild, model, webhookId);
             return author;
         }
-
-        public static bool IsNsfw(IChannel channel) =>
-            IsNsfw(channel.Name);
-        public static bool IsNsfw(string channelName) =>
-            channelName == "nsfw" || channelName.StartsWith("nsfw-");
     }
 }
